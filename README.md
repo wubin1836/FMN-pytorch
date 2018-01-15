@@ -13,7 +13,9 @@ pytorch ...
 ## Running the tests
 
 pre_process.py : change data from word2idx
+
 train.py       : use config.py set paramter and train FMN model
+
 predict.py     : get predict score using FMN model
 
 ### Break down into end to end tests
