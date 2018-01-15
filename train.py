@@ -137,7 +137,7 @@ if use_cuda:
     q_decoder = q_decoder.cuda()
 
 for epoch in range(301):
-    trainIters(fmn, q_decoder ,print_every=50, n_layers=1, pos_enc=1)
+    trainIters(fmn, q_decoder, print_every=50)
     if epoch % 100 == 0:
         torch.save(fmn.state_dict(), "model/%d.enc" % epoch)
         torch.save(q_decoder.state_dict(), "model/%d.dec" % epoch)

@@ -21,6 +21,8 @@ with codecs.open("./data/sample_data.txt","r","utf-8") as f:
     q_d_tmp = [] #for each query with it's document
     q_tmp = []
 
+
+    d_index = 0
     lines = f.readlines()
     for line in lines:
         line = line.strip()
@@ -38,7 +40,7 @@ with codecs.open("./data/sample_data.txt","r","utf-8") as f:
             q.append(q_tmp)
             q_tmp = []
             q_d_tmp = []
-
+            d_index = 0
         else:
             tmp = line.strip().split(" ")
             index_tmp = [word_dict["SOS"]]
@@ -50,7 +52,8 @@ with codecs.open("./data/sample_data.txt","r","utf-8") as f:
                     index_tmp.append(word_dict["UNK"])
             index_tmp.append(word_dict["EOS"])
             if (tmp[-1] == "0" or tmp[-1] == "1") and len(tmp) > 1:  # document
-                q_d_tmp.append([index_tmp,int(tmp[-1])])
+                q_d_tmp.append([index_tmp,int(tmp[-1]), d_index])
+                d_index += 1
             else:
                 q_tmp = index_tmp
 

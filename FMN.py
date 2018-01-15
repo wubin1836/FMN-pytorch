@@ -60,7 +60,10 @@ class FMN(nn.Module):
                         p[pi], hidden_c, hidden_a
                     )
                 if self.position_encoding == 1:
-                    hidden_c = self.position_dense(torch.cat((hidden_c, self.position_embedding(p_index)), 0))
+                    position_input = Variable(torch.LongTensor([p_index]))[0].cuda()
+                    pos_emb = self.position_embedding(position_input).view(1, 1, -1)
+                    hidden_c = torch.cat((hidden_c, pos_emb), 2)
+                    hidden_c = self.position_dense(hidden_c)
                 if p_index == 0:
                     pos_c = hidden_c
                     pos_a = hidden_a
@@ -79,7 +82,10 @@ class FMN(nn.Module):
                         n[ni], hidden_c, hidden_a
                     )
                 if self.position_encoding == 1:
-                    hidden_c = self.position_dense(torch.cat((hidden_c, self.position_embedding(n_index)), 0))
+                    position_input =  Variable(torch.LongTensor([n_index]))[0].cuda()
+                    pos_emb = self.position_embedding(position_input).view(1,1,-1)
+                    hidden_c = torch.cat((hidden_c, pos_emb),2)
+                    hidden_c = self.position_dense(hidden_c)
                 if n_index == 0:
                     neg_c = hidden_c
                     neg_a = hidden_a
