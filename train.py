@@ -129,7 +129,7 @@ import matplotlib.ticker as ticker
 import numpy as np
 
 from model import QueryDecoder
-fmn = FMN(MAX_DIC, TERM_HIDDEN_SIZE, QUERY_HIDDEN_SIZE, TERM_HIDDEN_SIZE, n_layers=1)
+fmn = FMN(MAX_DIC, TERM_HIDDEN_SIZE, QUERY_HIDDEN_SIZE, TERM_HIDDEN_SIZE, n_layers=1, pos_enc=1)
 q_decoder = QueryDecoder(QUERY_HIDDEN_SIZE, MAX_DIC,1)
 
 if use_cuda:
@@ -137,7 +137,7 @@ if use_cuda:
     q_decoder = q_decoder.cuda()
 
 for epoch in range(301):
-    trainIters(fmn, q_decoder ,print_every=50)
+    trainIters(fmn, q_decoder ,print_every=50, n_layers=1, pos_enc=1)
     if epoch % 100 == 0:
         torch.save(fmn.state_dict(), "model/%d.enc" % epoch)
         torch.save(q_decoder.state_dict(), "model/%d.dec" % epoch)

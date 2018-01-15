@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from model import *
 
 class FMN(nn.Module):
-    def __init__(self, dict_num, term_hidden_size, query_hidden_size, document_hidden_size, n_layers=1):
+    def __init__(self, dict_num, term_hidden_size, query_hidden_size, document_hidden_size, n_layers=1, pos_enc=1):
         super(FMN, self).__init__()
         self.n_layers = n_layers
         self.dict_num = dict_num
@@ -15,6 +15,10 @@ class FMN(nn.Module):
         self.query_hidden_size = query_hidden_size
         self.document_hidden_size = document_hidden_size
         self.softmax = torch.nn.Softmax()
+
+        self.position_embedding = nn.Embedding(15, 4) #set fixed number
+        self.position_dense = nn.Linear(term_hidden_size+4, term_hidden_size)
+        self.position_encoding = pos_enc
 
         self.term_encoder =  TermEncoder(dict_num,term_hidden_size)
         self.query_encoder = QueryEncoder(term_hidden_size,query_hidden_size)
@@ -55,6 +59,8 @@ class FMN(nn.Module):
                     output_c, output_a, hidden_c, hidden_a = self.document_encoder.forward(
                         p[pi], hidden_c, hidden_a
                     )
+                if self.position_encoding == 1:
+                    hidden_c = self.position_dense(torch.cat((hidden_c, self.position_embedding(p_index)), 0))
                 if p_index == 0:
                     pos_c = hidden_c
                     pos_a = hidden_a
@@ -72,6 +78,8 @@ class FMN(nn.Module):
                     output_c, output_a, hidden_c, hidden_a = self.document_encoder.forward(
                         n[ni], hidden_c, hidden_a
                     )
+                if self.position_encoding == 1:
+                    hidden_c = self.position_dense(torch.cat((hidden_c, self.position_embedding(n_index)), 0))
                 if n_index == 0:
                     neg_c = hidden_c
                     neg_a = hidden_a
