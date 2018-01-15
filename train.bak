@@ -1,0 +1,247 @@
+import random
+import torch
+import torch.nn as nn
+from torch.autograd import Variable
+from torch import optim
+from config import MAX_LENGTH,MAX_SESSION,TERM_HIDDEN_SIZE,QUERY_HIDDEN_SIZE,SOS_token,EOS_token,MAX_DIC
+
+import cPickle as pickle
+S = pickle.load(open("./data/S.pkl","r")) # source query
+T = pickle.load(open("./data/T.pkl","r")) # target query
+D = pickle.load(open("./data/D.pkl","r")) # docuemnts
+
+SESSION_NUM = len(S)
+Click_thread = 1 #from 0 to max_click_index+1
+
+softmax = torch.nn.Softmax()
+
+sources = []
+targets = []
+documents = []
+
+use_cuda = torch.cuda.is_available()
+
+from model import *
+
+def variableFromSentence(sentence): #change index to variable
+    result = Variable(torch.LongTensor(sentence).view(-1, 1))
+    if use_cuda:
+        return result.cuda()
+    else:
+        return result
+
+for i in range(SESSION_NUM):
+    #source variable
+    sources.append([variableFromSentence(s) for s in S[i]])
+
+    #target variable
+    targets.append(variableFromSentence(T[i]))
+    #document variable
+    for item in D:
+        document_tmp = []
+        query_num = len(item)
+
+        for q_item in item:
+            document_pos_tmp = []
+            document_neg_tmp = []
+            max_click = 0
+            for index in range(len(q_item),0,-1):
+                if q_item[index-1][1] == 1:
+                    max_click = index - 1
+            for index in range(0,min(len(q_item),max_click+1)):
+                if q_item[index][1] == 1: #click document
+                    click_v = variableFromSentence(q_item[index][0])
+                    document_pos_tmp.append(click_v)
+                else:#un-click document
+                    if index <= max_click:
+                        un_click_v = variableFromSentence(q_item[index][0])
+                        document_neg_tmp.append(un_click_v)
+            document_tmp.append(document_pos_tmp)
+            document_tmp.append(document_neg_tmp)
+        documents.append(document_tmp)
+
+def train(input_variable, target_variable, document_variable, t_encoder, d_encoder, q_encoder, q_decoder,
+          t_encoder_optimizer, d_encoder_optimizer, q_encoder_optimizer, q_decoder_optimizer, criterion, max_length=MAX_LENGTH):
+
+    q_encoder_hidden = q_encoder.initHidden()
+
+    t_encoder_optimizer.zero_grad()
+    q_decoder_optimizer.zero_grad()
+    q_encoder_optimizer.zero_grad()
+    d_encoder_optimizer.zero_grad()
+
+    query_num = len(input_variable)
+
+    loss = 0
+
+    q_encoder_outputs = Variable(torch.zeros(query_num, q_decoder.hidden_size))
+    q_encoder_outputs = q_encoder_outputs.cuda() if use_cuda else q_encoder_outputs
+
+    for qi in range(len(input_variable)):
+        q_input_variable = input_variable[qi]
+        input_length = q_input_variable.size()[0]
+        #term encoding
+        encoder_hidden = t_encoder.initHidden()
+        for ei in range(input_length):
+            encoder_output, encoder_hidden = t_encoder(
+                q_input_variable[ei], encoder_hidden)
+
+
+        # pos memory network
+        p_index = 0
+        n_index = 0
+        pos_c = pos_a = neg_c = neg_a = Variable()
+        if use_cuda:
+            pos_c = pos_c.cuda()
+            pos_a = pos_c.cuda()
+            neg_c = neg_c.cuda()
+            neg_a = neg_a.cuda()
+
+        for p in document_variable[0]:
+            hidden_a = d_encoder.initHidden()
+            hidden_c = d_encoder.initHidden()
+            d_length = p.size()[0]
+            for pi in range(d_length):
+                output_c, output_a , hidden_c, hidden_a = d_encoder(
+                    p[pi], hidden_c ,hidden_a
+                )
+            if p_index == 0:
+                pos_c = hidden_c
+                pos_a = hidden_a
+            else:
+                pos_c = torch.cat((pos_c, hidden_c), 1)
+                pos_a = torch.cat((pos_a, hidden_a), 1)
+            p_index += 1
+
+        # neg memory network
+        for n in document_variable[1]:
+            hidden_a = d_encoder.initHidden()
+            hidden_c = d_encoder.initHidden()
+            d_length = n.size()[0]
+            for ni in range(d_length):
+                output_c, output_a ,hidden_c, hidden_a = d_encoder(
+                    n[ni], hidden_c ,hidden_a
+                )
+            if n_index == 0:
+                neg_c = hidden_c
+                neg_a = hidden_a
+            else:
+                neg_c = torch.cat((neg_c, hidden_c),1)
+                neg_a = torch.cat((neg_a, hidden_a),1)
+            n_index += 1
+
+        pos_c = pos_c.view(-1, 256)
+        pos_a = pos_a.view(-1, 256)
+        neg_c = neg_c.view(-1, 256)
+        neg_a = neg_a.view(-1, 256)
+
+
+        q_pos_neg = encoder_hidden
+        q_pos_neg = q_pos_neg.cuda() if use_cuda else q_pos_neg
+
+
+        #pos memory
+        if p_index > 0:
+            a = torch.mm(pos_a, torch.transpose(encoder_hidden.view(1,256), 0, 1)).view(1,-1)
+            a = softmax(a).view(-1,1)
+            pos_memory =torch.mul(pos_c, a)
+            for i in range(pos_memory.size()[0]):
+                q_pos_neg = q_pos_neg + pos_memory[i].view(1, 1, 256)
+
+        #neg memory
+        if n_index > 0:
+            a = torch.mm(neg_a, torch.transpose(encoder_hidden.view(1,256), 0, 1)).view(1,-1)
+            a = softmax(a).view(-1,1)
+            neg_memory = torch.mul(neg_c, a)
+            for i in range(neg_memory.size()[0]):
+                q_pos_neg = q_pos_neg + neg_memory[i].view(1,1,256)
+
+
+        q_encoder_output, q_encoder_hidden = q_encoder(
+            q_pos_neg, q_encoder_hidden
+        )
+        q_encoder_outputs[qi] = q_encoder_output[0][0]
+
+
+    # query decoding
+    decoder_input = Variable(torch.LongTensor([[SOS_token]]))
+    decoder_input = decoder_input.cuda() if use_cuda else decoder_input
+
+    decoder_hidden = q_encoder_hidden
+
+    target_length = target_variable.size()[0]
+    for di in range(target_length):
+        decoder_output, decoder_hidden = q_decoder(
+            decoder_input, decoder_hidden,)
+        topv, topi = decoder_output.data.topk(1)
+        ni = topi[0][0]
+
+        decoder_input = Variable(torch.LongTensor([[ni]]))
+        decoder_input = decoder_input.cuda() if use_cuda else decoder_input
+
+        loss += criterion(decoder_output, target_variable[di])
+        if ni == EOS_token:
+            break
+
+    loss.backward()
+
+    t_encoder_optimizer.step()
+    d_encoder_optimizer.step()
+    q_encoder_optimizer.step()
+    q_decoder_optimizer.step()
+
+    return loss.data[0] / target_length
+
+
+from tqdm import tqdm
+def trainIters(t_encoder, d_encoder, q_encoder, q_decoder, save_every=10000, print_every=1000, learning_rate=0.01):
+    print_losses = []
+    print_loss_total = 0
+
+    t_encoder_optimizer = optim.SGD(t_encoder.parameters(), lr=learning_rate)
+    q_encoder_optimizer = optim.SGD(q_encoder.parameters(), lr=learning_rate)
+    q_decoder_optimizer = optim.SGD(q_decoder.parameters(), lr=learning_rate)
+    d_encoder_optimizer = optim.SGD(d_encoder.parameters(), lr=learning_rate)
+
+    criterion = nn.NLLLoss()
+    #criterion = nn.MSELoss()
+
+    for iter in tqdm(range(1, len(S) + 1)):
+        input_variable = sources[iter - 1]
+        target_variable = targets[iter - 1]
+        document_variable = documents[iter - 1]
+
+        loss = train(input_variable, target_variable, document_variable, t_encoder, d_encoder, q_encoder, q_decoder,
+                     t_encoder_optimizer, d_encoder_optimizer, q_encoder_optimizer, q_decoder_optimizer, criterion)
+        print_loss_total += loss
+
+        if iter % save_every == 0:
+            torch.save(t_encoder.state_dict(), "model/%d.enc" % iter)
+            torch.save(q_decoder.state_dict(), "model/%d.dec" % iter)
+
+        if iter % print_every == 0:
+            print print_loss_total / print_every, iter
+            print_losses.append(print_loss_total / print_every)
+            print_loss_total = 0
+    print print_loss_total / print_every, epoch
+
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import numpy as np
+
+
+t_encoder = TermEncoder(MAX_DIC, TERM_HIDDEN_SIZE)
+d_encoder = ContextEncoder(MAX_DIC,TERM_HIDDEN_SIZE)
+q_encoder = QueryEncoder(TERM_HIDDEN_SIZE, QUERY_HIDDEN_SIZE)
+q_decoder = QueryDecoder(QUERY_HIDDEN_SIZE, MAX_DIC,1)
+
+if use_cuda:
+    t_encoder = t_encoder.cuda()
+    q_encoder = q_encoder.cuda()
+    q_decoder = q_decoder.cuda()
+    d_encoder = d_encoder.cuda()
+
+
+for epoch in range(100):
+    trainIters(t_encoder, d_encoder, q_encoder, q_decoder, save_every=10000 ,print_every=50)
+    print("epoch %d#################"%epoch)
