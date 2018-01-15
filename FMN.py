@@ -116,7 +116,7 @@ class FMN(nn.Module):
                 a = self.softmax(a).view(-1, 1)
                 neg_memory = torch.mul(neg_c, a)
                 for i in range(neg_memory.size()[0]):
-                    q_pos_neg = q_pos_neg + neg_memory[i].view(1, 1, 256)
+                    q_pos_neg = q_pos_neg - neg_memory[i].view(1, 1, 256)
 
             q_encoder_hidden = self.query_encoder.initHidden()
             q_encoder_output, q_encoder_hidden = self.query_encoder.forward(
